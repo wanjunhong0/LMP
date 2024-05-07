@@ -27,17 +27,16 @@ datas, question_string = prepare_dataset(args.dataset)
 for data in tqdm(datas):
     question = data[question_string]
     topics = data['topic_entity']
+    facts, paths = [], []
     for topic in topics:
         topic_name = topics[topic]
-        relations = get_relations(question, topic, topic_name, args, 5)
+        relations = get_relations(question, topic, topic_name, args, 3)
+        paths.append({"entity:": topic_name, "relations": relations})
         entities_id, entities_name = get_entities(topic, relations)
         topic_prop = direct_propagate(question, topic_name, relations, entities_name, args)
-        prompt = question.format(topic_prop, question)
-        response = response = run_llm(prompt, args.temperature, args.max_length, args.openai_api_key, args.llm)
+        facts += topic_prop
+    prompt = question_prompt.format("\n".join(facts), question)
+    response = run_llm(prompt, args.temperature, args.max_length, args.openai_api_key, args.llm)
 
-
-
-
-
-    output = {"question": question, "result": response}
+    output = {"question": question, "result": response, "path": paths, "prompt": facts}
     save_2_jsonl("lmp_{}_{}.jsonl".format(args.dataset, args.llm), output)
