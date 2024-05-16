@@ -24,13 +24,16 @@ args = parser.parse_args()
 
 
 datas, question_string = prepare_dataset(args.dataset)
+
+datas = datas[1500:]
+
 for data in tqdm(datas):
     question = data[question_string]
     topics = data['topic_entity']
     facts, paths = [], []
     for topic in topics:
         topic_name = topics[topic]
-        relations = get_relations(question, topic, topic_name, args, 3)
+        relations = get_relations(question, topic, topic_name, args, 5)
         paths.append({"entity:": topic_name, "relations": relations})
         entities_id, entities_name = get_entities(topic, relations)
         topic_prop = direct_propagate(question, topic_name, relations, entities_name, args)

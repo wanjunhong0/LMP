@@ -6,7 +6,7 @@ import random
 
 
 SPARQLPATH = "http://10.3.216.75:25815/sparql"  # depend on your own internal address and port, shown in Freebase folder's readme.md
-# SPARQLPATH= "http://localhost:8000/sparql"
+# SPARQLPATH= "http://localhost:8890/sparql"
 
 # pre-defined sparql
 sparql_head_relations = """
@@ -61,7 +61,29 @@ FILTER(?e != ns:%s)
 ?e ns:type.object.name ?name .
 }
 """ 
-
+sparql_entity_name_extra = """
+PREFIX ns: <http://rdf.freebase.com/ns/>
+SELECT DISTINCT ?name
+WHERE {
+{
+ns:%s ?r ?name .
+FILTER (isLiteral(?name))
+}
+UNION
+{
+ns:%s ?r ?e . 
+FILTER(?e != ns:%s)
+?e ns:type.object.name ?name .
+}
+}
+"""
+sparql_entity_alias = """
+PREFIX ns: <http://rdf.freebase.com/ns/>
+SELECT DISTINCT ?alias
+WHERE {
+ns:%s ns:common.topic.alias ?alias .
+}
+"""
 
 def execute_sparql(sparql_query):
     sparql = SPARQLWrapper(SPARQLPATH)
@@ -71,18 +93,17 @@ def execute_sparql(sparql_query):
     return results["results"]["bindings"]
 
 
-
 def get_relations(question, topic, topic_name, args, top_n):
     head_relations = execute_sparql(sparql_head_relations % topic)
     head_relations = filter_relations(head_relations)
-    if top_n > 0:
+    if len(head_relations) > top_n > 0:
         prompt = relations_reduced_prompt.format(top_n, question, topic_name, head_relations)
         response = run_llm(prompt, args.temperature, args.max_length, args.openai_api_key, args.llm)
         reduced_relations = get_reduced_relations(response, head_relations)
-        while len(reduced_relations) == 0:
+        while len(reduced_relations) < 3:
             print('Reduced relations failed, Retrying.')
             print(response)
-            response = run_llm(prompt, 0.5, args.max_length, args.openai_api_key, args.llm)
+            response = run_llm(prompt, 1, args.max_length, args.openai_api_key, args.llm)
             reduced_relations = get_reduced_relations(response, head_relations)
 
         head_relations = reduced_relations
@@ -96,7 +117,7 @@ def filter_relations(sparql_output):
         relation = i['r']['value']
         if relation.startswith("http://rdf.freebase.com/ns/"):
             relation = relation.replace("http://rdf.freebase.com/ns/", "")
-            if not (relation.startswith("type.")  or relation.startswith("common.") or relation.startswith("freebase.") or relation.endswith("id")):
+            if not (relation.startswith(('kg', 'imdb', 'common', 'type', 'freebase')) or relation.endswith(('id', 'msrp', 'number', 'amount', 'permission', 'email', 'unemployment_rate', 'population')) or 'gdp' in relation):
                 relations.append(relation)
 
     return relations
@@ -116,10 +137,10 @@ def get_entities(topic, relations):
     entities_id, entities_name = [], []
     for relation in relations:
         tail_entities = execute_sparql(sparql_tail_entities % (topic, relation))
-        tail_entities_id, tail_entities_name = filter_entities(tail_entities, topic)
+        ### !!! some relations like m.04n32 --> music.artist.track has 8477 tail entities
+        tail_entities_id, tail_entities_name = filter_entities(tail_entities[:20], topic)
         entities_id.append(tail_entities_id)
         entities_name.append(tail_entities_name)
-
     return entities_id, entities_name
 
 
@@ -148,9 +169,7 @@ def get_entity_name(entity_id, topic):
     if len(name) == 0:
         name = execute_sparql(sparql_entity_name_wiki % entity_id) # try wiki sameas name
         if len(name) == 0:
-            name = execute_sparql(sparql_entity_name_literal % entity_id) # try if any literal connect to the entity
-            if len(name) == 0:
-                name = execute_sparql(sparql_entity_name_1hop % (entity_id, topic)) # try 1-hop entity name except original topic
+            name = execute_sparql(sparql_entity_name_extra % (entity_id, entity_id, topic)) # try connected literal or 1-hop entity name except original topic
     
     if len(name) > 0:
         name = ", ".join([i['name']['value'] for i in name])
