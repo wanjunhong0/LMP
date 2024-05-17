@@ -97,12 +97,11 @@ def get_relations(question, topic, topic_name, args, top_n):
     head_relations = execute_sparql(sparql_head_relations % topic)
     head_relations = filter_relations(head_relations)
     if len(head_relations) > top_n > 0:
-        prompt = relations_reduced_prompt.format(top_n, question, topic_name, head_relations)
+        prompt = relations_reduced_prompt.format(top_n, question, topic_name, '; '.join(head_relations))
         response = run_llm(prompt, args.temperature, args.max_length, args.openai_api_key, args.llm)
         reduced_relations = get_reduced_relations(response, head_relations)
-        while len(reduced_relations) < 3:
+        while len(reduced_relations) < (top_n - 2):
             print('Reduced relations failed, Retrying.')
-            print(response)
             response = run_llm(prompt, 1, args.max_length, args.openai_api_key, args.llm)
             reduced_relations = get_reduced_relations(response, head_relations)
 

@@ -25,7 +25,7 @@ args = parser.parse_args()
 
 datas, question_string = prepare_dataset(args.dataset)
 
-datas = datas[1500:]
+# datas = datas[1500:]
 
 for data in tqdm(datas):
     question = data[question_string]

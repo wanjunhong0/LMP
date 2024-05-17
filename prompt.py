@@ -17,9 +17,9 @@ topic: {}
 relations: {}
 """
 
-direct_propagate_prompt = """ Given the question and {} related facts of its topic, please summarize each fact while keeping anything useful to answer the question and return each summarized fact as a list.
+direct_propagate_prompt = """ Given the question and {0} related facts of its topic, please summarize each fact while keeping anything useful to answer the question and return all {0} summarized facts as a list.
 
-question: {}
+question: {1}
 
 fact:
 """

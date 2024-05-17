@@ -88,3 +88,19 @@ def get_list_str(string):
     str_list = [i[i.find(" ")+1:] for i in string.split('\n') if re.match("^\*|\-|[0-99].", i)]
 
     return str_list
+
+def count_tokens(text, engine):
+    punctuation = set('!"#$%&\'()*+,-./:;<=>?@[\]^_`{|}~')
+    number = set('0123456789')
+
+    n_tokens = len("".join(i for i in text if i in punctuation))
+    text = "".join(i for i in text if i not in punctuation)
+    if 'llama' in engine.lower():
+        n_tokens += len("".join(i for i in text if i in number))
+    else:
+        n_tokens += len("".join(i for i in text if i in number)) /2
+    text  = "".join(i for i in text if i not in number)
+    n_tokens += len(text) / 4
+
+    return n_tokens
+
