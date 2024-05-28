@@ -89,17 +89,16 @@ def get_list_str(string):
 
     return str_list
 
-def count_tokens(text, engine):
+def token_count(text):
     punctuation = set('!"#$%&\'()*+,-./:;<=>?@[\]^_`{|}~')
     number = set('0123456789')
 
     n_tokens = len("".join(i for i in text if i in punctuation))
     text = "".join(i for i in text if i not in punctuation)
-    if 'llama' in engine.lower():
-        n_tokens += len("".join(i for i in text if i in number))
-    else:
-        n_tokens += len("".join(i for i in text if i in number)) /2
+
+    n_tokens += len("".join(i for i in text if i in number)) /2
     text  = "".join(i for i in text if i not in number)
+
     n_tokens += len(text) / 4
 
     return n_tokens

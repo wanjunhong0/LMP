@@ -7,7 +7,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str,
                     default="webqsp", help="choose the dataset from {webqsp, cwq}.")
 parser.add_argument("--file_path", type=str, 
-                    default="./output/lmp_webqsp_llama.jsonl", help="the model output file name.")
+                    default="./output/lmp_webqsp_llama-3.jsonl", help="the model output file name.")
 parser.add_argument("--alias", action='store_true', help="consider answer alias.")                  
 args = parser.parse_args()
 
@@ -31,6 +31,8 @@ def reverse_match(answer, result):
 answers = prepare_answer(args.dataset, alias=args.alias)
 results = read_jsonl(args.file_path)
 hits = []
+
+# results = results[:100]
 
 for result in results:
     answer = answers[result['question']]

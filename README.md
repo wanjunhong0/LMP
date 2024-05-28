@@ -10,7 +10,7 @@
 
 - [ ] multi-hop propagation
 
-- [ ] count token # and auto split LLM input
+- [x] count token # and auto split LLM input
 
 - [ ] graph extraction and pre-filtering
 

@@ -63,7 +63,7 @@ FILTER(?e != ns:%s)
 """ 
 sparql_entity_name_extra = """
 PREFIX ns: <http://rdf.freebase.com/ns/>
-SELECT DISTINCT ?name
+SELECT DISTINCT ?r ?name
 WHERE {
 {
 ns:%s ?r ?name .
@@ -102,6 +102,7 @@ def get_relations(question, topic, topic_name, args, top_n):
         reduced_relations = get_reduced_relations(response, head_relations)
         while len(reduced_relations) < (top_n - 2):
             print('Reduced relations failed, Retrying.')
+            print(response)
             response = run_llm(prompt, 1, args.max_length, args.openai_api_key, args.llm)
             reduced_relations = get_reduced_relations(response, head_relations)
 
@@ -137,7 +138,7 @@ def get_entities(topic, relations):
     for relation in relations:
         tail_entities = execute_sparql(sparql_tail_entities % (topic, relation))
         ### !!! some relations like m.04n32 --> music.artist.track has 8477 tail entities
-        tail_entities_id, tail_entities_name = filter_entities(tail_entities[:20], topic)
+        tail_entities_id, tail_entities_name = filter_entities(tail_entities[:50], topic)
         entities_id.append(tail_entities_id)
         entities_name.append(tail_entities_name)
     return entities_id, entities_name
@@ -167,13 +168,15 @@ def get_entity_name(entity_id, topic):
     name = execute_sparql(sparql_entity_name % entity_id)
     if len(name) == 0:
         name = execute_sparql(sparql_entity_name_wiki % entity_id) # try wiki sameas name
-        if len(name) == 0:
-            name = execute_sparql(sparql_entity_name_extra % (entity_id, entity_id, topic)) # try connected literal or 1-hop entity name except original topic
     
     if len(name) > 0:
         name = ", ".join([i['name']['value'] for i in name])
     else:
-        name = 'NA'
+        name = execute_sparql(sparql_entity_name_extra % (entity_id, entity_id, topic)) # try connected literal or 1-hop entity name except original topic
+        if len(name) > 0:
+            name = ", ".join(["{}: {}".format(i['r']['value'].split('.')[-1], i['name']['value']) for i in name if len(filter_relations([i])) > 0])
+        else: 
+            name = 'NA'
 
     return name
 
