@@ -72,6 +72,9 @@ def prepare_answer(dataset_name, alias=False):
                                 answer_alias = [i['alias']['value'] for i in answer_alias]
                                 answer_list += answer_alias
             answer_dict.update({data[question_string]: list(set(answer_list))})
+    elif dataset_name == 'cwq':
+        for data in tqdm(datas):
+            answer_dict.update({data[question_string]: [data['answer']]})
     
     return answer_dict
 
@@ -85,7 +88,7 @@ def normalize_str(string):
     return string
 
 def get_list_str(string):
-    str_list = [i[i.find(" ")+1:] for i in string.split('\n') if re.match("^\*|\-|[0-99].", i)]
+    str_list = [i[i.find(" ")+1:] for i in string.replace('\n\t', ' ').split('\n') if re.match("^\*|\-|[0-99]", i)]
 
     return str_list
 

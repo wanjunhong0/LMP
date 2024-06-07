@@ -32,7 +32,7 @@ answers = prepare_answer(args.dataset, alias=args.alias)
 results = read_jsonl(args.file_path)
 hits = []
 
-# results = results[:100]
+# results = results[:700]
 
 for result in results:
     answer = answers[result['question']]
