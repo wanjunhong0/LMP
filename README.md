@@ -8,10 +8,10 @@
 
 - [x] evaluation with match, reverse match, and alias of answers
 
-- [ ] multi-hop propagation
+- [X] multi-hop propagation
 
 - [x] count token # and auto split LLM input
 
-- [ ] graph extraction and pre-filtering
-
 - [ ] tail relations
+
+- [ ] improve efficiency (especially on get_entities)

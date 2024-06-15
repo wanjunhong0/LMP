@@ -15,6 +15,31 @@ def get_propagate_list(topic_name, paths):
 
     return propagate_list
 
+def get_propagate_list_distant(relations, paths):
+    propagate_list = []
+    for relation in relations:
+        entities_name_previous = paths[relation.rsplit('->', 1)[0]]['entities_name']
+        entities_name = paths[relation]['entities_name']
+        assert len(entities_name_previous) == len(entities_name), 'Entities does not match with neighbors'
+        n = len(entities_name_previous)
+        propagate = []
+        for i in range(n):
+            if len(entities_name[i]) > 0:
+                propagate.append('The topic {} has relation {} with following entities: [{}].'.format(entities_name_previous[i], relation.rsplit('->', 1)[1], '; '.join(entities_name[i])))
+        propagate = list(set(propagate))
+        while sum([token_count(i) for i in propagate]) > 7000:
+            n = n - 10
+            propagate = []
+            for i in range(n):
+                if len(entities_name[i]) > 0:
+                    propagate.append('The topic {} has relation {} with following entities: [{}].'.format(entities_name_previous[i], relation.rsplit('->', 1)[1], '; '.join(entities_name[i])))
+            propagate = list(set(propagate))
+        propagate = ' '.join(propagate)
+        propagate = '\nPrevious summarized fact: {}\nNew detailed fact: {}\n'.format(paths[relation.rsplit('->', 1)[0]]['fact'], propagate)
+        propagate_list.append(propagate)
+
+    return propagate_list
+
 def split_propagate_list(propagate_list, limit=7000):
     """Split propagate list in order to prevent exceeding token limits in LLM.
     """
@@ -36,44 +61,35 @@ def split_propagate_list(propagate_list, limit=7000):
 
     return splitted_propagate_list
 
-def basic_propagate(question, propagate_list, args):
+def basic_propagate(question, propagate_list, hop, args):
     n = len(propagate_list)
-    prompt = direct_propagate_prompt.format(n, question)
+    if hop > 1:
+        prompt = propagate_distant_prompt.format(n, question)
+    else:
+        prompt = propagate_prompt.format(n, question)
     for i in range(n):
         prompt += '\n{}. '.format(i+1) + propagate_list[i]
-    response = run_llm(prompt, args.temperature, args.max_length, args.openai_api_key, args.llm)
+    response = run_llm(prompt, args.temperature, args.max_length, args.openai_api_key, args.llm, args.verbose)
     # print(prompt)
     # print(response)
     output = get_list_str(response)
     while len(output) != n:
         print('Propagation format unmatched. Retrying...')
         print(response)
-        response = run_llm(prompt, 1, args.max_length, args.openai_api_key, args.llm)
+        response = run_llm(prompt, 1, args.max_length, args.openai_api_key, args.llm, args.verbose)
         output = get_list_str(response)
     
     return output
 
-def propagate(question, topic_name, paths, args):
+def propagate(question, topic_name, relations, paths, hop, args):
     output = []
-    if len(paths) > 0:
-        propagation_list = get_propagate_list(topic_name, paths)
-        propagation_list = split_propagate_list(propagation_list)
-        for i in propagation_list:
-            output += basic_propagate(question, i, args)
+    if len(relations) > 0:
+        if hop > 1:
+            propagate_list = get_propagate_list_distant(relations, paths)
+        else:
+            propagate_list = get_propagate_list(topic_name, paths)
+        propagate_list = split_propagate_list(propagate_list)
+        for i in propagate_list:
+            output += basic_propagate(question, i, hop, args)
 
     return output
-
-# def direct_propagate(question, topic_name, relations, entities_name, args):
-#     n = len(relations)
-#     prompt = direct_propagate_prompt.format(n, question)
-#     for i in range(n):
-#         prompt += '\n{}. the topic {} has relation {} with following entities: {}.'.format(i+1, topic_name, relations[i], '; '.join(list(set(entities_name[i]))))
-#     response = run_llm(prompt, args.temperature, args.max_length, args.openai_api_key, args.llm)
-#     output = get_list_str(response)
-#     while len(output) != n:
-#         print('Propagation format unmatched. Retrying...')
-#         print(response)
-#         response = run_llm(prompt, 1, args.max_length, args.openai_api_key, args.llm)
-#         output = get_list_str(response)
-    
-#     return output

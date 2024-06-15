@@ -1,8 +1,8 @@
 from tqdm import tqdm
 import argparse
-from utils import prepare_dataset, save_2_jsonl, run_llm
-from freebase import get_relations, get_entities, get_relations_2hop, get_entities_2hop
-from propagation import propagate, get_propagate_list
+from utils import prepare_dataset, save_2_jsonl, run_llm, construct_facts
+from freebase import get_relations, get_entities, get_relations_distant, get_entities_distant
+from propagation import propagate
 import random
 from prompt import question_prompt
 
@@ -20,12 +20,12 @@ parser.add_argument("--llm", type=str,
                     default="llama-3", help="choose base LLM model from {llama, gpt-3.5-turbo, gpt-4}.")
 parser.add_argument("--openai_api_key", type=str,
                     default="", help="if the LLM is gpt-3.5-turbo or gpt-4, you need add your own openai api key.")
+parser.add_argument('--verbose', action='store_true', help="print LLM input and output.")
 args = parser.parse_args()
-
 
 datas, question_string = prepare_dataset(args.dataset)
 
-datas = datas[12:]
+datas = datas[3:]
 
 for data in tqdm(datas):
     question = data[question_string]
@@ -34,30 +34,30 @@ for data in tqdm(datas):
 
     for topic in topics:
         topic_name = topics[topic]
-        relations = get_relations(question, topic, topic_name, args, 5)
+        # 1-hop propagation
+        relations = get_relations(question, topic, topic_name, args, 3)
         entities_id, entities_name = get_entities(topic, relations)
         [paths[topic_name].update({r: {"entities_id": entities_id[i], "entities_name": entities_name[i]}}) for i, r in enumerate(relations)]
-
-        facts = propagate(question, topic_name, paths[topic_name], args)
+        facts = propagate(question, topic_name, relations, paths[topic_name], 1, args)
         [paths[topic_name][r].update({"fact": facts[i]}) for i, r in enumerate(relations)]
-
-    for topic in topics:
-        topic_name = topics[topic]
-        relations = get_relations_2hop(question, topic, topic_name, paths[topic_name], args, 3)
-        entities_id, entities_name = get_entities_2hop(topic, relations)
+        # 2-hop propagation
+        relations = get_relations_distant(question, topic, topic_name, relations, paths[topic_name], args, 3)
+        entities_id, entities_name = get_entities_distant(paths[topic_name], relations)
         [paths[topic_name].update({r: {"entities_id": entities_id[i], "entities_name": entities_name[i]}}) for i, r in enumerate(relations)]
-
-        facts = propagate(question, propagate_list, args)
+        facts = propagate(question, topic_name, relations, paths[topic_name], 2, args)
+        [paths[topic_name][r].update({"fact": facts[i], "entities_id": sum(entities_id[i], []), "entities_name": sum(entities_name[i], [])}) for i, r in enumerate(relations)]
+        # 3-hop propagation
+        relations = get_relations_distant(question, topic, topic_name, relations, paths[topic_name], args, 3)
+        entities_id, entities_name = get_entities_distant(paths[topic_name], relations)
+        [paths[topic_name].update({r: {"entities_id": entities_id[i], "entities_name": entities_name[i]}}) for i, r in enumerate(relations)]
+        facts = propagate(question, topic_name, relations, paths[topic_name], 3, args)
         [paths[topic_name][r].update({"fact": facts[i]}) for i, r in enumerate(relations)]
+        # clean paths
+        [paths[topic_name].update({r: paths[topic_name][r]['fact']}) for r in paths[topic_name]]
 
-    facts = []
-    for i in paths:
-        for j in paths[i]:
-            fact = paths[i][j]['fact']
-            facts.append(fact)
-            paths[i].update({j: fact})
-    prompt = question_prompt.format("\n".join(facts), question)
-    response = run_llm(prompt, args.temperature, args.max_length, args.openai_api_key, args.llm)
+    facts = construct_facts(paths, topics, True)
+    prompt = question_prompt.format(facts, question)
+    response = run_llm(prompt, args.temperature, args.max_length, args.openai_api_key, args.llm, args.verbose)
     output = {"question": question, "result": response, "paths": paths}
 
-    save_2_jsonl("lmp_{}_{}_2hop_direct_1.jsonl".format(args.dataset, args.llm), output)
+    save_2_jsonl("lmp_{}_{}_3hop.jsonl".format(args.dataset, args.llm), output)

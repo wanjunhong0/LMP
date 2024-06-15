@@ -19,7 +19,7 @@ def prepare_dataset(dataset_name):
         exit(-1)
     return datas, question_string
 
-def run_llm(prompt, temperature, max_tokens, openai_api_keys, engine="gpt-3.5-turbo"):
+def run_llm(prompt, temperature, max_tokens, openai_api_keys, engine="gpt-3.5-turbo", verbose=False):
     if "llama" in engine.lower():
         openai_api_key = "EMPTY"
         openai_api_base = "http://10.3.216.75:20686/v1"  # your local llama server port
@@ -40,6 +40,12 @@ def run_llm(prompt, temperature, max_tokens, openai_api_keys, engine="gpt-3.5-tu
             frequency_penalty=0,
             presence_penalty=0)
     result = response.choices[0].message.content
+
+    if verbose:
+        print('===================input======================')
+        print(prompt)
+        print('===================output======================')
+        print(result)
 
     return result
 
@@ -106,3 +112,32 @@ def token_count(text):
 
     return n_tokens
 
+def construct_facts(paths, topics, description=False):
+    facts = ''
+    for topic in topics:
+        topic_name = topics[topic]
+        facts += 'Here are some facts about topic {} that may related to the question.'.format(topic_name)
+        relations_1hop = [i for i in list(paths[topic_name].keys()) if i.count('->') == 0]
+        relations_2hop = [i for i in list(paths[topic_name].keys()) if i.count('->') == 1]
+        relations_3hop = [i for i in list(paths[topic_name].keys()) if i.count('->') == 2]
+        for i, r1 in enumerate(relations_1hop):
+            facts += '\n{}. {}'.format(i+1, paths[topic_name][r1])
+            j = 1
+            for r2 in relations_2hop:
+                if r1 in r2:
+                    facts += '\n\t{}.{}. {}'.format(i+1, j, paths[topic_name][r2])
+                    k = 1
+                    for r3 in relations_3hop:
+                        if r2 in r3:
+                            facts += '\n\t\t{}.{}.{}. {}'.format(i+1, j, k, paths[topic_name][r3])
+                            k += 1
+                    j += 1
+            facts += '\n'
+        if description:
+            from freebase import sparql_entity_description, execute_sparql
+            description = execute_sparql(sparql_entity_description % topic)
+            if len(description) > 0:
+                facts += '\n{}. {}\n'.format(i+2, description[0]['des']['value'])
+        facts += '\n'
+
+    return facts
