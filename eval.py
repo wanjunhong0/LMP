@@ -15,7 +15,8 @@ def match(answer, result):
     answer = [normalize_str(i) for i in answer]
     result = normalize_str(result)
     for ans in answer:
-        if ans in result or all([i in result for i in ans.split(' ')]):
+        # if ans in result or all([i in result for i in ans.split(' ')]):
+        if ans in result:
             return True
     return False
    

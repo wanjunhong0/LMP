@@ -25,7 +25,7 @@ args = parser.parse_args()
 
 datas, question_string = prepare_dataset(args.dataset)
 
-datas = datas[3:]
+datas = datas[20:]
 
 for data in tqdm(datas):
     question = data[question_string]
@@ -35,13 +35,13 @@ for data in tqdm(datas):
     for topic in topics:
         topic_name = topics[topic]
         # 1-hop propagation
-        relations = get_relations(question, topic, topic_name, args, 3)
+        relations = get_relations(question, topic, topic_name, args, 5)
         entities_id, entities_name = get_entities(topic, relations)
         [paths[topic_name].update({r: {"entities_id": entities_id[i], "entities_name": entities_name[i]}}) for i, r in enumerate(relations)]
         facts = propagate(question, topic_name, relations, paths[topic_name], 1, args)
         [paths[topic_name][r].update({"fact": facts[i]}) for i, r in enumerate(relations)]
         # 2-hop propagation
-        relations = get_relations_distant(question, topic, topic_name, relations, paths[topic_name], args, 3)
+        relations = get_relations_distant(question, topic, topic_name, relations, paths[topic_name], args, 4)
         entities_id, entities_name = get_entities_distant(paths[topic_name], relations)
         [paths[topic_name].update({r: {"entities_id": entities_id[i], "entities_name": entities_name[i]}}) for i, r in enumerate(relations)]
         facts = propagate(question, topic_name, relations, paths[topic_name], 2, args)

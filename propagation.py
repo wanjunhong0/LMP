@@ -1,4 +1,4 @@
-from utils import run_llm, get_list_str, token_count
+from utils import run_llm, get_list_str, token_count, timer_func
 from prompt import *
 import re
 
@@ -81,6 +81,7 @@ def basic_propagate(question, propagate_list, hop, args):
     
     return output
 
+# @timer_func
 def propagate(question, topic_name, relations, paths, hop, args):
     output = []
     if len(relations) > 0:

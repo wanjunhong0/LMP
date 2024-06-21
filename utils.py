@@ -3,7 +3,20 @@ from openai import OpenAI
 import time
 import re
 from tqdm import tqdm
+from colorama import Fore, init
 
+
+init(autoreset=True)
+def timer_func(func):
+    # This function shows the execution time of 
+    # the function object passed
+    def wrap_func(*args, **kwargs):
+        t1 = time.time()
+        result = func(*args, **kwargs)
+        t2 = time.time()
+        print(Fore.RED + f'Function {func.__name__!r} executed in {(t2-t1):.4f}s')
+        return result
+    return wrap_func
 
 def prepare_dataset(dataset_name):
     if dataset_name == 'cwq':
@@ -22,7 +35,7 @@ def prepare_dataset(dataset_name):
 def run_llm(prompt, temperature, max_tokens, openai_api_keys, engine="gpt-3.5-turbo", verbose=False):
     if "llama" in engine.lower():
         openai_api_key = "EMPTY"
-        openai_api_base = "http://10.3.216.75:20686/v1"  # your local llama server port
+        openai_api_base = "http://10.3.216.75:38842/v1"  # your local llama server port
         # openai.api_base = "http://localhost:8000/v1"
         client = OpenAI(api_key=openai_api_key, base_url=openai_api_base)
         engine = client.models.list().data[0].id

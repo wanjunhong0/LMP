@@ -13,12 +13,20 @@ Based on the question and its topic, please select the most relevant relations t
 relations: {3}
 """
 
-relations_distant_reduced_prompt = """Given the question and its topic, each fact is associated with the 1-hop relation about the topic.
+# relations_distant_reduced_prompt = """Given the question and its topic, each fact is associated with the 1-hop relation about the topic.
+
+# question: {1}
+# topic: {2}
+
+# Based on the question and its existing facts about the topic, please select top {0} 2-hop relations to further explore that could be helpful to answer the question from below and just return selected 2-hop relations in a numbered list without explanation.
+# """
+
+relations_distant_reduced_prompt = """Given the question and its topic, each fact is associated with a 1-hop relation about the topic.
 
 question: {1}
 topic: {2}
 
-Based on the question and its existing facts about the topic, please select top {0} 2-hop relations to further explore that could be helpful to answer the question from below and just return selected 2-hop relations in a numbered list without explanation.
+Based on the question and its existing facts about the topic, please select top {0} 2-hop relations as 1-hop relation -> next relation to further explore and just return selected 2-hop relations in a numbered list without explanation.
 """
 
 propagate_prompt = """Given the question, we have {0} facts about its topic and related relation that may helpful to answer the question.
