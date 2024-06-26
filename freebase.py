@@ -47,6 +47,24 @@ ns:%s ns:%s ?e .
 }
 LIMIT 50
 """ 
+sparql_entities = """
+PREFIX ns: <http://rdf.freebase.com/ns/>
+SELECT DISTINCT ?start ?e ?name ?wiki ?r ?e1 ?extra
+WHERE {
+VALUES ?start {%s}
+?start ns:%s ?e .
+FILTER(?e != ns:%s)
+OPTIONAL {?e ns:type.object.name ?name .}.
+OPTIONAL {?e <http://www.w3.org/2002/07/owl#sameAs> ?wiki . FILTER (!BOUND(?name))}.
+OPTIONAL 
+{FILTER (!BOUND(?name) && !BOUND(?wiki))
+{?e ?r ?extra . FILTER (isLiteral(?extra))}
+UNION
+{?e ?r ?e1 . ?e1 ns:type.object.name ?extra . }
+} .
+}
+LIMIT 100
+""" 
 # sparql_tail_entities_2hop = """
 # PREFIX ns: <http://rdf.freebase.com/ns/>
 # SELECT DISTINCT ?e
@@ -125,7 +143,7 @@ def execute_sparql(sparql_query):
     results = sparql.query().convert()
     return results["results"]["bindings"]
 
-# @timer_func
+@timer_func
 def get_relations(question, topic, topic_name, args, top_n):
     head_relations = execute_sparql(sparql_head_relations % topic)
     head_relations = filter_relations(head_relations)
@@ -134,7 +152,7 @@ def get_relations(question, topic, topic_name, args, top_n):
 
     return head_relations
 
-# @timer_func
+@timer_func
 def get_relations_distant(question, topic, topic_name, relations, paths, args, top_n):
     head_relations = {}
     for relation in relations:
@@ -190,7 +208,7 @@ def reduce_relations(question, topic_name, relations, args, top_n):
 def reduce_relations_distant(question, topic_name, relations, args, top_n):
     prompt = relations_distant_reduced_prompt.format(top_n, question, topic_name)
     for i, r in enumerate(relations):
-        prompt += '\n{}.\n1-hop relation: {}\nfact: {}\nnext relations: {}\n'.format(i+1, r.rsplit('->', 1)[-1], relations[r]['fact'], ', '.join(relations[r]['relation']))
+        prompt += '\n{}.\nfact with associated relation {}: {}\nnext relations: {}\n'.format(i+1, r.rsplit('->', 1)[-1], relations[r]['fact'], ', '.join(relations[r]['relation']))
     # delete last 10 of the most lengthy relations if over token limits
     while token_count(prompt) > 7000:
         prompt = relations_distant_reduced_prompt.format(top_n, question, topic_name)
@@ -198,7 +216,7 @@ def reduce_relations_distant(question, topic_name, relations, args, top_n):
         for i, r in enumerate(relations):
             if token_count(relations[r]['relation']) == max_count:
                 relations[r].update({'relation': relations[r]['relation'][:-10]})
-            prompt += '\n{}.\n1-hop relation: {}\nfact: {}\nnext relations: {}\n'.format(i+1, r.rsplit('->', 1)[-1], relations[r]['fact'], ', '.join(relations[r]['relation']))
+            prompt += '\n{}.\nfact with associated relation {}: {}\nnext relations: {}\n'.format(i+1, r.rsplit('->', 1)[-1], relations[r]['fact'], ', '.join(relations[r]['relation']))
     # print(prompt)
     response = run_llm(prompt, args.temperature, args.max_length, args.openai_api_key, args.llm, args.verbose)
     relations_list = []
@@ -221,7 +239,7 @@ def get_reduced_relations(response, relations):
     response_list = [i.translate(exclude).replace(" ", "") for i in response_list if i.count('.') > 1]
     reduced_relations = []
     for relation in relations:
-        if relation in response_list or relation.split('->', 1)[-1] in response_list:
+        if relation in response_list or relation.rsplit('->', 1)[-1] in response_list:
         # if relation in response_list or relation.rsplit('->', 1)[-1] in [i.rsplit('->', 1)[-1] for i in response_list]:
             reduced_relations.append(relation)
 
@@ -229,60 +247,147 @@ def get_reduced_relations(response, relations):
 
 
 
-# @timer_func
-def get_entities(topic, relations):
-    entities_id, entities_name = [], []
-    for relation in relations:
-        tail_entities = execute_sparql(sparql_tail_entities % (topic, relation))
-        ### !!! some relations like m.04n32 --> music.artist.track has 8477 tail entities
-        tail_entities_id, tail_entities_name = filter_entities(tail_entities, topic)
-        # tail_entities_id, tail_entities_name = list(set(tail_entities_id)), list(set(tail_entities_name))
-        # assert len(tail_entities_id) == len(tail_entities_name), 'Entities with same name exist!'
-        entities_id.append(tail_entities_id)
-        entities_name.append(tail_entities_name)
+def filter_entities(start_entities, sparql_output):
+    entities = {start_entities[start_entity]: {} for start_entity in start_entities}
+    for i in sparql_output:
+        start_entity_id = i['start']['value'].replace("http://rdf.freebase.com/ns/", "")
+        start_entity_name = start_entities[start_entity_id]
+        if i['e']['type'] == 'uri':
+            entity_id = i['e']['value'].replace("http://rdf.freebase.com/ns/", "")
+            entity_name = 'NA'
+            if 'name' in i:
+                entity_name = i['name']['value']
+            elif 'wiki' in i:
+                entity_name = i['wiki']['value']
+            elif 'extra' in i:
+                # filter useless extra relations and entities back to start entities
+                r = i['r']['value'].replace("http://rdf.freebase.com/ns/", "")
+                if r.endswith(('id', 'has_no_value', 'has_value')):
+                    continue
+                if 'e1' in i:
+                    if i['e1']['value'].replace("http://rdf.freebase.com/ns/", "") in start_entities:
+                        continue
+                if entity_id in entities[start_entity_name]:
+                    entity_name = entities[start_entity_name][entity_id] + ', '
+                else:
+                    entity_name = ''
+                content = "{}: {}".format(r.split('.')[-1], i['extra']['value'])
+                if content not in entity_name:
+                    entity_name += content
+
+
+        elif i['e']['type'] in ['literal', 'typed-literal']: # text entities (has no id, no head relations)
+            entity_id = i['e']['type']
+            entity_name = i['e']['value']
     
-    return entities_id, entities_name
+        entities[start_entity_name].update({entity_id: entity_name})
+
+
+    return entities
+
+@timer_func
+def get_entities(start_entities, relations, topic):
+    entities = []
+    for relation in relations:
+        sparql_output = execute_sparql(sparql_entities % (' '.join(['ns:' + i for i in list(start_entities.keys())]), relation, topic))
+        filtered_entities = filter_entities(start_entities, sparql_output)
+
+        entities.append(filtered_entities)
+    
+    return entities
+
+@timer_func
+def get_entities_distant(paths, relations, topic):
+    entities = []
+    for relation in relations:
+        start_entities = {}
+        previous_entities = paths[relation.rsplit('->', 1)[0]]['entities']
+        for i in previous_entities:
+            for j in previous_entities[i]:
+                if j not in ['literal', 'typed-literal']:
+                    start_entities.update({j: previous_entities[i][j]})
+
+        sparql_output = execute_sparql(sparql_entities % (' '.join(['ns:' + i for i in list(start_entities.keys())]), relation.rsplit('->', 1)[1], topic))
+        filtered_entities = filter_entities(start_entities, sparql_output)
+
+        entities.append(filtered_entities)
+    
+    return entities
 
 # @timer_func
-def get_entities_distant(paths, relations):
-    ids, names = [], []
-    for relation in relations:
-        entities_id, entities_name = [], []
-        topics = paths[relation.rsplit('->', 1)[0]]['entities_id']
-        for topic in topics:
-            tail_entities = execute_sparql(sparql_tail_entities % (topic, relation.rsplit('->', 1)[1]))
-            ### !!! some relations like m.04n32 --> music.artist.track has 8477 tail entities
-            tail_entities_id, tail_entities_name = filter_entities(tail_entities, topic)
-            # tail_entities_id, tail_entities_name = list(set(tail_entities_id)), list(set(tail_entities_name))
-            # assert len(tail_entities_id) == len(tail_entities_name), 'Entities with same name exist!'
-            entities_id.append(tail_entities_id)
-            entities_name.append(tail_entities_name)
-        ids.append(entities_id)
-        names.append(entities_name)
-    return ids, names
+# def get_entities(topic, relations):
+#     entities_id, entities_name = [], []
+#     for relation in relations:
+#         tail_entities = execute_sparql(sparql_tail_entities % (topic, relation))
+#         ### !!! some relations like m.04n32 --> music.artist.track has 8477 tail entities
+#         tail_entities_id, tail_entities_name = filter_entities(tail_entities, topic)
+#         # tail_entities_id, tail_entities_name = list(set(tail_entities_id)), list(set(tail_entities_name))
+#         # assert len(tail_entities_id) == len(tail_entities_name), 'Entities with same name exist!'
+#         entities_id.append(tail_entities_id)
+#         entities_name.append(tail_entities_name)
+    
+#     return entities_id, entities_name
+
+# # @timer_func
+# def get_entities_distant(paths, relations):
+#     ids, names = [], []
+#     for relation in relations:
+#         entities_id, entities_name = [], []
+#         topics = paths[relation.rsplit('->', 1)[0]]['entities_id']
+#         for topic in topics:
+#             tail_entities = execute_sparql(sparql_tail_entities % (topic, relation.rsplit('->', 1)[1]))
+#             ### !!! some relations like m.04n32 --> music.artist.track has 8477 tail entities
+#             tail_entities_id, tail_entities_name = filter_entities(tail_entities, topic)
+#             # tail_entities_id, tail_entities_name = list(set(tail_entities_id)), list(set(tail_entities_name))
+#             # assert len(tail_entities_id) == len(tail_entities_name), 'Entities with same name exist!'
+#             entities_id.append(tail_entities_id)
+#             entities_name.append(tail_entities_name)
+#         ids.append(entities_id)
+#         names.append(entities_name)
+#     return ids, names
 
 
-def filter_entity(i, topic):
-    entity_id = i['e']['value']
-    if entity_id.startswith("http://rdf.freebase.com/ns/"):
-        entity_id = entity_id.replace("http://rdf.freebase.com/ns/", "")
-        entity_name = get_entity_name(entity_id, topic)
-    elif i['e']['type'] in ['literal', 'typed-literal']: # text entities (has no id, no head relations)
-        entity_id = i['e']['type']
-        entity_name = entity_id
+# def filter_entity(i, topic):
+#     entity_id = i['e']['value']
+#     if entity_id.startswith("http://rdf.freebase.com/ns/"):
+#         entity_id = entity_id.replace("http://rdf.freebase.com/ns/", "")
+#         entity_name = get_entity_name(entity_id, topic)
+#     elif i['e']['type'] in ['literal', 'typed-literal']: # text entities (has no id, no head relations)
+#         entity_id = i['e']['type']
+#         entity_name = entity_id
 
-    return entity_id, entity_name
+#     return entity_id, entity_name
+
+# # def filter_entities(sparql_output, topic, remove_na=False):
+# #     entities_id, entities_name = [], []
+
+# #     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+# #         futures = [executor.submit(filter_entity, i, topic) for i in sparql_output]
+# #         for future in concurrent.futures.as_completed(futures):
+# #             entity_id, entity_name = future.result()
+# #             entities_id.append(entity_id)
+# #             entities_name.append(entity_name)
+
+# #     if remove_na:
+# #         keep_index = [i for i, name in enumerate(entities_name) if name != 'NA']
+# #         entities_id = [entities_id[i] for i in keep_index]
+# #         entities_name = [entities_name[i] for i in keep_index]
+
+# #     return entities_id, entities_name
+
 
 # def filter_entities(sparql_output, topic, remove_na=False):
 #     entities_id, entities_name = [], []
-
-#     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-#         futures = [executor.submit(filter_entity, i, topic) for i in sparql_output]
-#         for future in concurrent.futures.as_completed(futures):
-#             entity_id, entity_name = future.result()
+#     for i in sparql_output:
+#         entity_id = i['e']['value']
+#         if entity_id.startswith("http://rdf.freebase.com/ns/"):
+#             entity_id = entity_id.replace("http://rdf.freebase.com/ns/", "")
+#             entity_name = get_entity_name(entity_id, topic)
 #             entities_id.append(entity_id)
 #             entities_name.append(entity_name)
-
+#         elif i['e']['type'] in ['literal', 'typed-literal']: # text entities (has no id, no head relations)
+#             entities_id.append(i['e']['type'])
+#             entities_name.append(entity_id)
 #     if remove_na:
 #         keep_index = [i for i, name in enumerate(entities_name) if name != 'NA']
 #         entities_id = [entities_id[i] for i in keep_index]
@@ -291,39 +396,19 @@ def filter_entity(i, topic):
 #     return entities_id, entities_name
 
 
-def filter_entities(sparql_output, topic, remove_na=False):
-    entities_id, entities_name = [], []
-    for i in sparql_output:
-        entity_id = i['e']['value']
-        if entity_id.startswith("http://rdf.freebase.com/ns/"):
-            entity_id = entity_id.replace("http://rdf.freebase.com/ns/", "")
-            entity_name = get_entity_name(entity_id, topic)
-            entities_id.append(entity_id)
-            entities_name.append(entity_name)
-        elif i['e']['type'] in ['literal', 'typed-literal']: # text entities (has no id, no head relations)
-            entities_id.append(i['e']['type'])
-            entities_name.append(entity_id)
-    if remove_na:
-        keep_index = [i for i, name in enumerate(entities_name) if name != 'NA']
-        entities_id = [entities_id[i] for i in keep_index]
-        entities_name = [entities_name[i] for i in keep_index]
-
-    return entities_id, entities_name
-
-
-def get_entity_name(entity_id, topic):
-    name = execute_sparql(sparql_entity_name % entity_id)
-    if len(name) == 0:
-        name = execute_sparql(sparql_entity_name_wiki % entity_id) # try wiki sameas name
+# def get_entity_name(entity_id, topic):
+#     name = execute_sparql(sparql_entity_name % entity_id)
+#     if len(name) == 0:
+#         name = execute_sparql(sparql_entity_name_wiki % entity_id) # try wiki sameas name
     
-    if len(name) > 0:
-        name = ", ".join([i['name']['value'] for i in name])
-    else:
-        name = execute_sparql(sparql_entity_name_extra % (entity_id, entity_id, topic)) # try connected literal or 1-hop entity name except original topic
-        if len(name) > 0:
-            name = ", ".join(["{}: {}".format(i['r']['value'].split('.')[-1], i['name']['value']) for i in name if len(filter_relations([i])) > 0])
-        else: 
-            name = 'NA'
+#     if len(name) > 0:
+#         name = ", ".join([i['name']['value'] for i in name])
+#     else:
+#         name = execute_sparql(sparql_entity_name_extra % (entity_id, entity_id, topic)) # try connected literal or 1-hop entity name except original topic
+#         if len(name) > 0:
+#             name = ", ".join(["{}: {}".format(i['r']['value'].split('.')[-1], i['name']['value']) for i in name if len(filter_relations([i])) > 0])
+#         else: 
+#             name = 'NA'
 
-    return name
+#     return name
 

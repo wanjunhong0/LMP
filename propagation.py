@@ -6,7 +6,7 @@ import re
 def get_propagate_list(topic_name, paths):
     propagate_list = []
     for relation in paths:
-        entities_name = list(set(paths[relation]['entities_name']))
+        entities_name = list(set(paths[relation]['entities'][topic_name].values()))
         propagate = 'The topic {} has relation {} with following entities: [{}].'.format(topic_name, relation, '; '.join(entities_name))
         while token_count(propagate) > 7000:
             entities_name = entities_name[:-10]
@@ -18,8 +18,9 @@ def get_propagate_list(topic_name, paths):
 def get_propagate_list_distant(relations, paths):
     propagate_list = []
     for relation in relations:
-        entities_name_previous = paths[relation.rsplit('->', 1)[0]]['entities_name']
-        entities_name = paths[relation]['entities_name']
+        entities = paths[relation.rsplit('->', 1)[0]]['entities']
+        entities_name_previous = list(entities.keys())
+        entities_name = [list(set(entities[i].values())) for i in entities_name_previous]
         assert len(entities_name_previous) == len(entities_name), 'Entities does not match with neighbors'
         n = len(entities_name_previous)
         propagate = []
@@ -81,7 +82,7 @@ def basic_propagate(question, propagate_list, hop, args):
     
     return output
 
-# @timer_func
+@timer_func
 def propagate(question, topic_name, relations, paths, hop, args):
     output = []
     if len(relations) > 0:
