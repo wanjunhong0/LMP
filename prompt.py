@@ -9,8 +9,8 @@ relations_reduced_prompt = """Given the question, we have the topic of the quest
 question: {1}
 topic: {2}
 
-Based on the question and its topic, please select the most relevant relations to answer the question from below and just return top {0} relations in a numbered list without explanation.
-relations: {3}
+Based on the question, please select top {0} relations from the relation options below to explore about the topic to answer the question and just return top {0} selected relations in a numbered list without explanation.
+relation options: {3}
 """
 
 # relations_distant_reduced_prompt = """Given the question and its topic, each fact is associated with the 1-hop relation about the topic.
@@ -26,14 +26,15 @@ relations_distant_reduced_prompt = """Given the question and its topic, each fac
 question: {1}
 topic: {2}
 
-Based on the question and facts about the topic, please select top {0} next relations to further explore about the facts and just return selected next relations in a numbered list without explanation.
+Based on the question and facts about the topic, please only select top {0} relations from relation options below to further explore about the facts to answer the question and just return selected relations in a numbered list without explanation.
 """
 
 propagate_prompt = """Given the question, we have {0} facts about its topic and related relation that may helpful to answer the question.
 
 question: {1}
+topic: {2}
 
-Based on the question, please summarize each following fact to better answer question and just return all summarized {0} facts as following order in a numbered list. 
+Based on the question, please summarize each following fact while only keeping everything that could be helpful to answer the question and just return all summarized {0} facts as following order in a numbered list without explanation. 
 """
 
 # propagate_distant_prompt = """Given the question, we have {0} previously summarized facts with some new detailed information about them.
@@ -46,12 +47,7 @@ Based on the question, please summarize each following fact to better answer que
 propagate_distant_prompt = """Given the question, we have some new detailed facts about {0} previously summarized facts.
 
 question: {1}
+topic: {2}
 
-Based on the question and previously summarized facts, please summarize each following new detailed fact to better answer question and just return all summarized {0} facts as following order in a numbered list. 
+Based on the question and previously summarized facts, please summarize each following new detailed fact while only keeping everything that could be helpful to answer the question and just return all summarized {0} facts as following order in a numbered list without explanation. 
 """
-# direct_propagate_prompt = """ Given the question and {0} facts of its topic, please summarize each fact while keeping anything useful to answer the question and just return all {0} summarized facts as a list.
-
-# question: {1}
-
-# fact:
-# """

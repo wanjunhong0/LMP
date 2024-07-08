@@ -8,8 +8,7 @@ from colorama import Fore, init
 
 init(autoreset=True)
 def timer_func(func):
-    # This function shows the execution time of 
-    # the function object passed
+    # This function shows the execution time of the function object passed
     def wrap_func(*args, **kwargs):
         t1 = time.time()
         result = func(*args, **kwargs)
@@ -27,41 +26,56 @@ def prepare_dataset(dataset_name):
         with open('./data/WebQSP.json',encoding='utf-8') as f:
             datas = json.load(f)
         question_string = 'RawQuestion'
+    elif dataset_name == 'grailqa':
+        with open('./data/grailqa.json',encoding='utf-8') as f:
+            datas = json.load(f)
+        question_string = 'question'
+    elif dataset_name == 'simpleqa':
+        with open('./data/SimpleQA.json',encoding='utf-8') as f:
+            datas = json.load(f)    
+        question_string = 'question'
+    elif dataset_name == 'webquestions':
+        with open('./data/WebQuestions.json',encoding='utf-8') as f:
+            datas = json.load(f)
+        question_string = 'question'
     else:
-        print("dataset not found, you should pick from {cwq, webqsp}.")
+        print("dataset not found, you should pick from {cwq, webqsp, grailqa, simpleqa, webquestions}.")
         exit(-1)
     return datas, question_string
 
-def run_llm(prompt, temperature, max_tokens, openai_api_keys, engine="gpt-3.5-turbo", verbose=False):
-    if "llama" in engine.lower():
-        openai_api_key = "EMPTY"
+
+
+def run_llm(prompt, args, history=None, retry_prompt=None):
+    if "llama" in args.llm.lower():
         openai_api_base = "http://10.3.216.75:38842/v1"  # your local llama server port
         # openai.api_base = "http://localhost:8000/v1"
-        client = OpenAI(api_key=openai_api_key, base_url=openai_api_base)
+        client = OpenAI(api_key="EMPTY", base_url=openai_api_base)
         engine = client.models.list().data[0].id
     else:
-        client = OpenAI(api_key=openai_api_keys)
-        
+        client = OpenAI(api_key=args.openai_api_key)
+        engine = args.llm
+    temperature = args.temperature  
     messages = [{"role": "system", "content": "You are an AI assistant that helps people find information."}]
-    message_prompt = {"role": "user", "content": prompt}
-    messages.append(message_prompt)
-    response = client.chat.completions.create(
-            model=engine,
-            messages = messages,
-            temperature=temperature,
-            # max_tokens=max_tokens,
-            frequency_penalty=0,
-            presence_penalty=0)
+    messages.append({"role": "user", "content": prompt})
+    if history is not None:
+        temperature = min(1, args.temperature + 0.1 * len(history))
+        # for i in history[-1:]:
+            # while token_count(str(messages)) < args.limit:
+        messages.append({"role": "assistant", "content": history[-1]})
+        messages.append({"role": "user", "content": retry_prompt})
+    response = client.chat.completions.create(model=engine, messages=messages, temperature=temperature,
+            # max_tokens=args.max_length,
+            frequency_penalty=0, presence_penalty=0)
     result = response.choices[0].message.content
 
-    if verbose:
+    if args.verbose:
         print('===================input======================')
         print(prompt)
         print('===================output======================')
         print(result)
 
     return result
-
+    
 def save_2_jsonl(file_name, output):
     with open(file_name, "a") as outfile:
         json_str = json.dumps(output)
@@ -94,7 +108,22 @@ def prepare_answer(dataset_name, alias=False):
     elif dataset_name == 'cwq':
         for data in tqdm(datas):
             answer_dict.update({data[question_string]: [data['answer']]})
-    
+    elif dataset_name == 'grailqa':
+        for data in tqdm(datas):
+            answer_list = []
+            for answer in data['answer']:
+                if "entity_name" in answer:
+                    answer_list.append(answer['entity_name'])
+                else:
+                    answer_list.append(answer['answer_argument'])
+            answer_dict.update({data[question_string]: list(set(answer_list))})
+    elif dataset_name == 'simpleqa':
+        for data in tqdm(datas):
+            answer_dict.update({data[question_string]: [data['answer']]})
+    elif dataset_name == 'webquestions':
+        for data in tqdm(datas):
+            answer_dict.update({data[question_string]: data['answers']})
+
     return answer_dict
 
 def normalize_str(string):
@@ -107,7 +136,11 @@ def normalize_str(string):
     return string
 
 def get_list_str(string):
-    str_list = [i[i.find(" ")+1:] for i in string.replace('\n\t', ' ').split('\n') if re.match("^\*|\-|[0-99]", i)]
+    string = '\n' + string      # avoid text start with numbered list, so that the first one can't be matched
+    matches = re.findall(r'\n\d+\.\s+(.*?)(?=\n\d+\.|$)', string, re.DOTALL)
+    str_list = [match.strip() for match in matches]
+
+    # str_list = [i[i.find(" ")+1:] for i in string.replace('\n\t', ' ').split('\n') if re.match("^\*|\-|[0-99]", i)]
 
     return str_list
 
@@ -133,6 +166,7 @@ def construct_facts(paths, topics, description=False):
         relations_1hop = [i for i in list(paths[topic_name].keys()) if i.count('->') == 0]
         relations_2hop = [i for i in list(paths[topic_name].keys()) if i.count('->') == 1]
         relations_3hop = [i for i in list(paths[topic_name].keys()) if i.count('->') == 2]
+        i = -1
         for i, r1 in enumerate(relations_1hop):
             facts += '\n{}. {}'.format(i+1, paths[topic_name][r1])
             j = 1

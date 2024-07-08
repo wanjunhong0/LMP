@@ -4,21 +4,23 @@ from prompt import relations_reduced_prompt, relations_distant_reduced_prompt
 from utils import run_llm, token_count, get_list_str, timer_func
 import random
 import concurrent.futures
+import time
 
 
-SPARQLPATH = "http://10.3.216.75:60156/sparql"  # depend on your own internal address and port
+# SPARQLPATH = "http://10.3.216.75:60156/sparql"  # depend on your own internal address and port
+SPARQLPATH = "http://10.3.216.69:57888/sparql"
 # SPARQLPATH = "http://10.3.76.30:8890/sparql"
 # SPARQLPATH= "http://localhost:8890/sparql"
 
 # pre-defined sparql
-sparql_head_relations = """
+sparql_relations = """
 PREFIX ns: <http://rdf.freebase.com/ns/>
 SELECT DISTINCT ?r
 WHERE {
 ns:%s ?r ?e .
 }
 """
-sparql_head_relations_2hop = """
+sparql_relations_2hop = """
 PREFIX ns: <http://rdf.freebase.com/ns/>
 SELECT DISTINCT ?r
 WHERE {
@@ -27,7 +29,7 @@ ns:%s ns:%s ?e .
 FILTER(?e1 != ns:%s)
 }
 """
-sparql_head_relations_3hop = """
+sparql_relations_3hop = """
 PREFIX ns: <http://rdf.freebase.com/ns/>
 SELECT DISTINCT ?r
 WHERE {
@@ -38,15 +40,6 @@ FILTER(?e1 != ns:%s)
 FILTER(?e != ?e2)
 }
 """
-
-sparql_tail_entities = """
-PREFIX ns: <http://rdf.freebase.com/ns/>
-SELECT DISTINCT ?e
-WHERE {
-ns:%s ns:%s ?e .
-}
-LIMIT 50
-""" 
 sparql_entities = """
 PREFIX ns: <http://rdf.freebase.com/ns/>
 SELECT DISTINCT ?start ?e ?name ?wiki ?r ?e1 ?extra
@@ -63,64 +56,8 @@ UNION
 {?e ?r ?e1 . ?e1 ns:type.object.name ?extra . }
 } .
 }
-LIMIT 100
+LIMIT 500
 """ 
-# sparql_tail_entities_2hop = """
-# PREFIX ns: <http://rdf.freebase.com/ns/>
-# SELECT DISTINCT ?e
-# WHERE {
-# ns:%s ns:%s ?e0 .
-# ?e0 ns:%s ?e .
-# FILTER(?e != ns:%s)
-# }
-# """ 
-sparql_entity_name = """
-PREFIX ns: <http://rdf.freebase.com/ns/>
-SELECT DISTINCT ?name
-WHERE {
-ns:%s ns:type.object.name ?name .
-}
-"""
-sparql_entity_name_wiki = """
-PREFIX ns: <http://rdf.freebase.com/ns/>
-SELECT DISTINCT ?name
-WHERE {
-ns:%s <http://www.w3.org/2002/07/owl#sameAs> ?name .
-}
-"""
-sparql_entity_name_literal = """
-PREFIX ns: <http://rdf.freebase.com/ns/>
-SELECT DISTINCT ?name
-WHERE {
-ns:%s ?r ?name .
-FILTER (isLiteral(?name))
-}
-"""
-sparql_entity_name_1hop = """
-PREFIX ns: <http://rdf.freebase.com/ns/>
-SELECT DISTINCT ?name
-WHERE {
-ns:%s ?r ?e . 
-FILTER(?e != ns:%s)
-?e ns:type.object.name ?name .
-}
-""" 
-sparql_entity_name_extra = """
-PREFIX ns: <http://rdf.freebase.com/ns/>
-SELECT DISTINCT ?r ?name
-WHERE {
-{
-ns:%s ?r ?name .
-FILTER (isLiteral(?name))
-}
-UNION
-{
-ns:%s ?r ?e . 
-FILTER(?e != ns:%s)
-?e ns:type.object.name ?name .
-}
-}
-"""
 sparql_entity_description = """
 PREFIX ns: <http://rdf.freebase.com/ns/>
 SELECT DISTINCT ?des
@@ -140,38 +77,14 @@ def execute_sparql(sparql_query):
     sparql = SPARQLWrapper(SPARQLPATH)
     sparql.setQuery(sparql_query)
     sparql.setReturnFormat(JSON)
-    results = sparql.query().convert()
+    results = None
+    while results == None:
+        try:
+            results = sparql.query().convert()
+        except:
+            time.sleep(10)
     return results["results"]["bindings"]
 
-@timer_func
-def get_relations(question, topic, topic_name, args, top_n):
-    head_relations = execute_sparql(sparql_head_relations % topic)
-    head_relations = filter_relations(head_relations)
-    if len(head_relations) > top_n > 0:
-        head_relations = reduce_relations(question, topic_name, head_relations, args, top_n)
-
-    return head_relations
-
-@timer_func
-def get_relations_distant(question, topic, topic_name, relations, paths, args, top_n):
-    head_relations = {}
-    for relation in relations:
-        if '->' in relation:
-            head_relation = execute_sparql(sparql_head_relations_3hop % (topic, relation.split('->')[0], relation.split('->')[1], topic))
-        else:
-            head_relation = execute_sparql(sparql_head_relations_2hop % (topic, relation, topic))
-        head_relation = filter_relations(head_relation)
-        if len(head_relation) > 0:
-            head_relations.update({relation: {'relation': head_relation, 'fact': paths[relation]['fact']}})
-    if sum([len(head_relations[r]['relation']) for r in head_relations]) > top_n > 0:
-        head_relations = reduce_relations_distant(question, topic_name, head_relations, args, top_n)
-    else:
-        relations_list = []
-        for r in  head_relations:
-            for i in head_relations[r]['relation']:
-                relations_list.append(r + '->' + i)
-        head_relations = relations_list
-    return head_relations
 
 def filter_relations(sparql_output):
     relations = []
@@ -179,64 +92,67 @@ def filter_relations(sparql_output):
         relation = i['r']['value']
         if relation.startswith("http://rdf.freebase.com/ns/"):
             relation = relation.replace("http://rdf.freebase.com/ns/", "")
-            if not (relation.startswith(('kg', 'imdb', 'common', 'type', 'freebase')) or relation.endswith(('id', 'msrp')) or 'iso' in relation):
+            if not (relation.startswith(('kg', 'imdb', 'common', 'type', 'freebase')) or relation.endswith(('id', 'msrp'))):
             # if not (relation.startswith(('kg', 'imdb', 'common', 'type', 'freebase')) or relation.endswith(('id', 'msrp', 'number', 'amount', 'permission', 'email', 'unemployment_rate', 'population'))):
                 relations.append(relation)
 
     return relations
 
-
 def reduce_relations(question, topic_name, relations, args, top_n):
     prompt = relations_reduced_prompt.format(top_n, question, topic_name, ', '.join(relations))
     # delete last 10 of the most lengthy relations if over token limits
-    while token_count(prompt) > 7500:
+    while token_count(prompt) > args.limit:
         relations = relations[:-10]
         prompt = relations_reduced_prompt.format(top_n, question, topic_name, ', '.join(relations))
-    # print(prompt)
-    response = run_llm(prompt, args.temperature, args.max_length, args.openai_api_key, args.llm, args.verbose)
+    response = run_llm(prompt, args)
     reduced_relations = get_reduced_relations(response, relations)
-    minimum = max(top_n - 1, 1)
-    while len(reduced_relations) < minimum:
+    minimum = max(top_n, 1)
+    history = []
+    retry_prompt = 'Selected relations do not exist in the relation options I provide. Please try again.'
+    while (len(reduced_relations) < minimum and len(history) < 10):
         print('Reduced relations failed, Retrying.')
-        print(response)
-        response = run_llm(prompt, 1, args.max_length, args.openai_api_key, args.llm, args.verbose)
-        reduced_relations = get_reduced_relations(response, relations)
+        minimum = max(minimum - 1, 1)
+        history.append(response)
+        response = run_llm(prompt, args, history, retry_prompt)
+        reduced_relations = list(set(reduced_relations + get_reduced_relations(response, relations)))
 
     return reduced_relations
-
 
 def reduce_relations_distant(question, topic_name, relations, args, top_n):
     prompt = relations_distant_reduced_prompt.format(top_n, question, topic_name)
     for i, r in enumerate(relations):
-        prompt += '\n{}.\nfact with associated relation {}: {}\nnext relations: {}\n'.format(i+1, r.rsplit('->', 1)[-1], relations[r]['fact'], ', '.join(relations[r]['relation']))
+        prompt += '\n{}.\nfact with associated relation {}: {}\nrelation options: {}\n'.format(i+1, r.rsplit('->', 1)[-1], relations[r]['fact'], ', '.join(relations[r]['relation']))
     # delete last 10 of the most lengthy relations if over token limits
-    while token_count(prompt) > 7000:
+    while token_count(prompt) > args.limit:
         prompt = relations_distant_reduced_prompt.format(top_n, question, topic_name)
         max_count = max([token_count(relations[r]['relation']) for r in relations])
         for i, r in enumerate(relations):
             if token_count(relations[r]['relation']) == max_count:
                 relations[r].update({'relation': relations[r]['relation'][:-10]})
-            prompt += '\n{}.\nfact with associated relation {}: {}\nnext relations: {}\n'.format(i+1, r.rsplit('->', 1)[-1], relations[r]['fact'], ', '.join(relations[r]['relation']))
-    # print(prompt)
-    response = run_llm(prompt, args.temperature, args.max_length, args.openai_api_key, args.llm, args.verbose)
+            prompt += '\n{}.\nfact with associated relation {}: {}\nrelation options: {}\n'.format(i+1, r.rsplit('->', 1)[-1], relations[r]['fact'], ', '.join(relations[r]['relation']))
+    response = run_llm(prompt, args)
     relations_list = []
     for r in  relations:
         for i in relations[r]['relation']:
             relations_list.append(r + '->' + i)
     reduced_relations = get_reduced_relations(response, relations_list)
-    minimum = max(top_n - 1, 1)
-    while len(reduced_relations) < minimum:
+    minimum = max(top_n, 1)
+    history = []
+    retry_prompt = 'Selected relations do not exist in the relation options I provide. Please try again.'
+    while (len(reduced_relations) < minimum and len(history) < 10):
+        minimum = max(minimum - 1, 1)
         print('Reduced relations failed, Retrying.')
-        print(response)
-        response = run_llm(prompt, 1, args.max_length, args.openai_api_key, args.llm, args.verbose)
-        reduced_relations = get_reduced_relations(response, relations_list)
+        history.append(response)
+        response = run_llm(prompt, args, history, retry_prompt)
+        reduced_relations = list(set(reduced_relations + get_reduced_relations(response, relations_list)))
 
     return reduced_relations
 
 def get_reduced_relations(response, relations):
     response_list = get_list_str(response)
+    response_list = [i for i in ' '.join(response_list).split() if i.count('.') > 1]
     exclude = str.maketrans('', '', '!"#$%&\'()*+,/:;?@[\]^`{|}~')
-    response_list = [i.translate(exclude).replace(" ", "") for i in response_list if i.count('.') > 1]
+    response_list = [i.translate(exclude) for i in response_list]
     reduced_relations = []
     for relation in relations:
         if relation in response_list or relation.rsplit('->', 1)[-1] in response_list:
@@ -244,6 +160,37 @@ def get_reduced_relations(response, relations):
             reduced_relations.append(relation)
 
     return reduced_relations
+
+# @timer_func
+def get_relations(question, topic, topic_name, args, top_n):
+    relations = execute_sparql(sparql_relations % topic)
+    relations = filter_relations(relations)
+    if len(relations) > top_n > 0:
+        relations = reduce_relations(question, topic_name, relations, args, top_n)
+
+    return relations
+
+# @timer_func
+def get_relations_distant(question, topic, topic_name, relations, paths, args, top_n):
+    next_relations = {}
+    for relation in relations:
+        if '->' in relation:
+            next_relation = execute_sparql(sparql_relations_3hop % (topic, relation.split('->')[0], relation.split('->')[1], topic))
+        else:
+            next_relation = execute_sparql(sparql_relations_2hop % (topic, relation, topic))
+        next_relation = filter_relations(next_relation)
+        if len(next_relation) > 0:
+            next_relations.update({relation: {'relation': next_relation, 'fact': paths[relation]['fact']}})
+    if sum([len(next_relations[r]['relation']) for r in next_relations]) > top_n > 0:
+        next_relations = reduce_relations_distant(question, topic_name, next_relations, args, top_n)
+    else:
+        relations_list = []
+        for r in  next_relations:
+            for i in next_relations[r]['relation']:
+                relations_list.append(r + '->' + i)
+        next_relations = relations_list
+
+    return next_relations
 
 
 
@@ -285,7 +232,7 @@ def filter_entities(start_entities, sparql_output):
 
     return entities
 
-@timer_func
+# @timer_func
 def get_entities(start_entities, relations, topic):
     entities = []
     for relation in relations:
@@ -296,7 +243,7 @@ def get_entities(start_entities, relations, topic):
     
     return entities
 
-@timer_func
+# @timer_func
 def get_entities_distant(paths, relations, topic):
     entities = []
     for relation in relations:
@@ -313,102 +260,3 @@ def get_entities_distant(paths, relations, topic):
         entities.append(filtered_entities)
     
     return entities
-
-# @timer_func
-# def get_entities(topic, relations):
-#     entities_id, entities_name = [], []
-#     for relation in relations:
-#         tail_entities = execute_sparql(sparql_tail_entities % (topic, relation))
-#         ### !!! some relations like m.04n32 --> music.artist.track has 8477 tail entities
-#         tail_entities_id, tail_entities_name = filter_entities(tail_entities, topic)
-#         # tail_entities_id, tail_entities_name = list(set(tail_entities_id)), list(set(tail_entities_name))
-#         # assert len(tail_entities_id) == len(tail_entities_name), 'Entities with same name exist!'
-#         entities_id.append(tail_entities_id)
-#         entities_name.append(tail_entities_name)
-    
-#     return entities_id, entities_name
-
-# # @timer_func
-# def get_entities_distant(paths, relations):
-#     ids, names = [], []
-#     for relation in relations:
-#         entities_id, entities_name = [], []
-#         topics = paths[relation.rsplit('->', 1)[0]]['entities_id']
-#         for topic in topics:
-#             tail_entities = execute_sparql(sparql_tail_entities % (topic, relation.rsplit('->', 1)[1]))
-#             ### !!! some relations like m.04n32 --> music.artist.track has 8477 tail entities
-#             tail_entities_id, tail_entities_name = filter_entities(tail_entities, topic)
-#             # tail_entities_id, tail_entities_name = list(set(tail_entities_id)), list(set(tail_entities_name))
-#             # assert len(tail_entities_id) == len(tail_entities_name), 'Entities with same name exist!'
-#             entities_id.append(tail_entities_id)
-#             entities_name.append(tail_entities_name)
-#         ids.append(entities_id)
-#         names.append(entities_name)
-#     return ids, names
-
-
-# def filter_entity(i, topic):
-#     entity_id = i['e']['value']
-#     if entity_id.startswith("http://rdf.freebase.com/ns/"):
-#         entity_id = entity_id.replace("http://rdf.freebase.com/ns/", "")
-#         entity_name = get_entity_name(entity_id, topic)
-#     elif i['e']['type'] in ['literal', 'typed-literal']: # text entities (has no id, no head relations)
-#         entity_id = i['e']['type']
-#         entity_name = entity_id
-
-#     return entity_id, entity_name
-
-# # def filter_entities(sparql_output, topic, remove_na=False):
-# #     entities_id, entities_name = [], []
-
-# #     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-# #         futures = [executor.submit(filter_entity, i, topic) for i in sparql_output]
-# #         for future in concurrent.futures.as_completed(futures):
-# #             entity_id, entity_name = future.result()
-# #             entities_id.append(entity_id)
-# #             entities_name.append(entity_name)
-
-# #     if remove_na:
-# #         keep_index = [i for i, name in enumerate(entities_name) if name != 'NA']
-# #         entities_id = [entities_id[i] for i in keep_index]
-# #         entities_name = [entities_name[i] for i in keep_index]
-
-# #     return entities_id, entities_name
-
-
-# def filter_entities(sparql_output, topic, remove_na=False):
-#     entities_id, entities_name = [], []
-#     for i in sparql_output:
-#         entity_id = i['e']['value']
-#         if entity_id.startswith("http://rdf.freebase.com/ns/"):
-#             entity_id = entity_id.replace("http://rdf.freebase.com/ns/", "")
-#             entity_name = get_entity_name(entity_id, topic)
-#             entities_id.append(entity_id)
-#             entities_name.append(entity_name)
-#         elif i['e']['type'] in ['literal', 'typed-literal']: # text entities (has no id, no head relations)
-#             entities_id.append(i['e']['type'])
-#             entities_name.append(entity_id)
-#     if remove_na:
-#         keep_index = [i for i, name in enumerate(entities_name) if name != 'NA']
-#         entities_id = [entities_id[i] for i in keep_index]
-#         entities_name = [entities_name[i] for i in keep_index]
-
-#     return entities_id, entities_name
-
-
-# def get_entity_name(entity_id, topic):
-#     name = execute_sparql(sparql_entity_name % entity_id)
-#     if len(name) == 0:
-#         name = execute_sparql(sparql_entity_name_wiki % entity_id) # try wiki sameas name
-    
-#     if len(name) > 0:
-#         name = ", ".join([i['name']['value'] for i in name])
-#     else:
-#         name = execute_sparql(sparql_entity_name_extra % (entity_id, entity_id, topic)) # try connected literal or 1-hop entity name except original topic
-#         if len(name) > 0:
-#             name = ", ".join(["{}: {}".format(i['r']['value'].split('.')[-1], i['name']['value']) for i in name if len(filter_relations([i])) > 0])
-#         else: 
-#             name = 'NA'
-
-#     return name
-

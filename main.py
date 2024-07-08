@@ -11,13 +11,15 @@ random.seed(123)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str,
-                    default="cwq", help="choose the dataset from {webqsp, cwq}.")
+                    default="simpleqa", help="choose the dataset from {cwq, webqsp, grailqa, simpleqa, webquestions}.")
+parser.add_argument("--limit", type=int,
+                    default=7000, help="the max length of the approximation LLMs input.")               
 parser.add_argument("--max_length", type=int,
                     default=1024, help="the max length of LLMs output.")
 parser.add_argument("--temperature", type=float,
                     default=0., help="the temperature")
 parser.add_argument("--llm", type=str,
-                    default="llama-3", help="choose base LLM model from {llama, gpt-3.5-turbo, gpt-4}.")
+                    default="llama-3", help="choose base LLM model from {llama-2, llama-3, gpt-3.5-turbo, gpt-4}.")
 parser.add_argument("--openai_api_key", type=str,
                     default="", help="if the LLM is gpt-3.5-turbo or gpt-4, you need add your own openai api key.")
 parser.add_argument('--verbose', action='store_true', help="print LLM input and output.")
@@ -25,7 +27,7 @@ args = parser.parse_args()
 
 datas, question_string = prepare_dataset(args.dataset)
 
-# datas = datas[2:]
+# datas = datas[2943:]
 
 for data in tqdm(datas):
     question = data[question_string]
@@ -57,7 +59,7 @@ for data in tqdm(datas):
 
     facts = construct_facts(paths, topics, True)
     prompt = question_prompt.format(facts, question)
-    response = run_llm(prompt, args.temperature, args.max_length, args.openai_api_key, args.llm, args.verbose)
+    response = run_llm(prompt, args)
     output = {"question": question, "result": response, "paths": paths}
 
-    save_2_jsonl("lmp_{}_{}_3hop.jsonl".format(args.dataset, args.llm), output)
+    save_2_jsonl("lmp_{}_{}_1hop.jsonl".format(args.dataset, args.llm), output)

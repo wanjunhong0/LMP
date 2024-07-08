@@ -12,6 +12,4 @@
 
 - [x] count token # and auto split LLM input
 
-- [ ] tail relations
-
-- [ ] improve efficiency (especially on get_entities)
+- [x] improve efficiency (especially on get_entities)
