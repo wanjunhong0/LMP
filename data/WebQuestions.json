@@ -23426,8 +23426,8 @@
             "Pacific Ocean"
         ],
         "topic_entity": {
-            "m.0jbt3": "Hawaii",
-            "m.03gh4": "Hawaii"
+            "m.0jbt3": "Hawaii(island)",
+            "m.03gh4": "Hawaii(state)"
         },
         "qid_topic_entity": {
             "Q68740": "Hawaii",

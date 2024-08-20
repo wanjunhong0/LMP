@@ -1,21 +1,10 @@
 import json
-from openai import OpenAI
+from openai import OpenAI, RateLimitError, APITimeoutError, APIConnectionError
 import time
 import re
 from tqdm import tqdm
 from colorama import Fore, init
 
-
-init(autoreset=True)
-def timer_func(func):
-    # This function shows the execution time of the function object passed
-    def wrap_func(*args, **kwargs):
-        t1 = time.time()
-        result = func(*args, **kwargs)
-        t2 = time.time()
-        print(Fore.RED + f'Function {func.__name__!r} executed in {(t2-t1):.4f}s')
-        return result
-    return wrap_func
 
 def prepare_dataset(dataset_name):
     if dataset_name == 'cwq':
@@ -44,6 +33,16 @@ def prepare_dataset(dataset_name):
     return datas, question_string
 
 
+def get_topics(topics):
+    names = []
+    for topic in topics:
+        topic_name = topics[topic]
+        while topic_name in names:
+            topic_name = topic_name + ' '
+        names.append(topic_name)
+        topics.update({topic: topic_name})
+    return topics
+
 
 def run_llm(prompt, args, history=None, retry_prompt=None):
     if "llama" in args.llm.lower():
@@ -58,14 +57,29 @@ def run_llm(prompt, args, history=None, retry_prompt=None):
     messages = [{"role": "system", "content": "You are an AI assistant that helps people find information."}]
     messages.append({"role": "user", "content": prompt})
     if history is not None:
-        temperature = min(1, args.temperature + 0.1 * len(history))
-        # for i in history[-1:]:
-            # while token_count(str(messages)) < args.limit:
+        temperature = min(1, args.temperature + 0.2 * len(history))
         messages.append({"role": "assistant", "content": history[-1]})
         messages.append({"role": "user", "content": retry_prompt})
-    response = client.chat.completions.create(model=engine, messages=messages, temperature=temperature,
-            # max_tokens=args.max_length,
+    try:
+        response = client.chat.completions.create(model=engine, messages=messages, temperature=temperature,
+            max_tokens=args.max_length,
             frequency_penalty=0, presence_penalty=0)
+    except RateLimitError:
+        time.sleep(60)
+        response = client.chat.completions.create(model=engine, messages=messages, temperature=temperature,
+            max_tokens=args.max_length,
+            frequency_penalty=0, presence_penalty=0)
+    except APITimeoutError:
+        time.sleep(10)
+        response = client.chat.completions.create(model=engine, messages=messages, temperature=temperature,
+            max_tokens=args.max_length,
+            frequency_penalty=0, presence_penalty=0)
+    except APIConnectionError:
+        time.sleep(10)
+        response = client.chat.completions.create(model=engine, messages=messages, temperature=temperature,
+            max_tokens=args.max_length,
+            frequency_penalty=0, presence_penalty=0)
+               
     result = response.choices[0].message.content
 
     if args.verbose:
@@ -98,12 +112,6 @@ def prepare_answer(dataset_name, alias=False):
                         answer_list.append(answer['AnswerArgument'])
                     else:
                         answer_list.append(answer['EntityName'])
-                        if alias:
-                            from freebase import sparql_entity_alias, execute_sparql
-                            answer_alias = execute_sparql(sparql_entity_alias % answer['AnswerArgument'])
-                            if len(answer_alias) > 0:
-                                answer_alias = [i['alias']['value'] for i in answer_alias]
-                                answer_list += answer_alias
             answer_dict.update({data[question_string]: list(set(answer_list))})
     elif dataset_name == 'cwq':
         for data in tqdm(datas):
@@ -139,10 +147,18 @@ def get_list_str(string):
     string = '\n' + string      # avoid text start with numbered list, so that the first one can't be matched
     matches = re.findall(r'\n\d+\.\s+(.*?)(?=\n\d+\.|$)', string, re.DOTALL)
     str_list = [match.strip() for match in matches]
-
-    # str_list = [i[i.find(" ")+1:] for i in string.replace('\n\t', ' ').split('\n') if re.match("^\*|\-|[0-99]", i)]
-
+    if len(str_list) > 0:
+        str_list = [i[i.find(" ")+1:] for i in string.replace('\n\t', ' ').split('\n') if re.match("^\*|\-|[0-99]", i)]
+    if len(str_list) > 0:
+        str_list[-1] = str_list[-1].split('\n\n')[0]
     return str_list
+
+def sort_with_indices(lst):
+    # Get the sorted list and the indices that would sort the list
+    sorted_lst = sorted(lst)
+    sorted_indices = sorted(range(len(lst)), key=lambda x: lst[x])
+    
+    return sorted_lst, sorted_indices
 
 def token_count(text):
     punctuation = set('!"#$%&\'()*+,-./:;<=>?@[\]^_`{|}~')
@@ -151,15 +167,16 @@ def token_count(text):
     n_tokens = len("".join(i for i in text if i in punctuation))
     text = "".join(i for i in text if i not in punctuation)
 
-    n_tokens += len("".join(i for i in text if i in number)) /2
+    # n_tokens += len("".join(i for i in text if i in number)) / 1    # for Llama-2
+    n_tokens += len("".join(i for i in text if i in number)) / 2
     text  = "".join(i for i in text if i not in number)
 
     n_tokens += len(text) / 4
 
     return n_tokens
 
-def construct_facts(paths, topics, description=False):
-    facts = ''
+def construct_facts(paths, topics, args, description=False):
+    facts = '\n'
     for topic in topics:
         topic_name = topics[topic]
         facts += 'Here are some facts about topic {} that may related to the question.'.format(topic_name)
@@ -168,15 +185,15 @@ def construct_facts(paths, topics, description=False):
         relations_3hop = [i for i in list(paths[topic_name].keys()) if i.count('->') == 2]
         i = -1
         for i, r1 in enumerate(relations_1hop):
-            facts += '\n{}. {}'.format(i+1, paths[topic_name][r1])
+            facts += '\n{}. {}'.format(i+1, paths[topic_name][r1][:args.max_length])
             j = 1
             for r2 in relations_2hop:
                 if r1 in r2:
-                    facts += '\n\t{}.{}. {}'.format(i+1, j, paths[topic_name][r2])
+                    facts += '\n\t{}.{}. {}'.format(i+1, j, paths[topic_name][r2][:args.max_length])
                     k = 1
                     for r3 in relations_3hop:
                         if r2 in r3:
-                            facts += '\n\t\t{}.{}.{}. {}'.format(i+1, j, k, paths[topic_name][r3])
+                            facts += '\n\t\t{}.{}.{}. {}'.format(i+1, j, k, paths[topic_name][r3][:args.max_length])
                             k += 1
                     j += 1
             facts += '\n'
@@ -186,5 +203,6 @@ def construct_facts(paths, topics, description=False):
             if len(description) > 0:
                 facts += '\n{}. {}\n'.format(i+2, description[0]['des']['value'])
         facts += '\n'
-
+        
+     
     return facts
