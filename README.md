@@ -8,7 +8,7 @@ The code of Paper: 'Digest the Knowledge: Large Language Model empowered Message
 ```python
 Python 3.8.5 
 SPARQLWrapper 2.0.0 
-openai 1.34.
+openai 1.34.0
 ```
 
 ## Datasets
