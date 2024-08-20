@@ -27,7 +27,7 @@ You can directly use openai API. For Llama-2 and Llama-3, you can use any openai
 
 ### Example usage
 
-Take cwq dataset as an instance, Use the following code to run LMP,
+Take cwq dataset as an instance, use the following code to run LMP,
 
 ``` python
 python main.py --dataset cwq --temperature 0 --depth 3 --width 3 --llm llama-3
@@ -49,7 +49,7 @@ python main.py --dataset cwq --temperature 0 --depth 3 --width 3 --llm llama-3
 
 ## Evaluation
 
-Take cwq dataset as an instance, Use the following code to conduct evaluation,
+Take cwq dataset as an instance, use the following code to conduct evaluation,
 
 ``` python
 python eval.py --dataset cwq --file_path output/lmp_cwq_llama-3_3hop.json
