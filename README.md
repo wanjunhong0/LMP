@@ -20,7 +20,7 @@ Datasets used in our experiment can be found in the  ```dataset``` folder, which
 
 ### Setup Knowledge Graph
 
-You need to setup Freebase on your local machine by following the [instruction](https://github.com/IDEA-FinAI/ToG/tree/main/Freebase) and also need to specify the server port of SPARQL in the line 7 of ```freebase.py``` also.
+You need to setup Freebase on your local machine by following the [instruction](https://github.com/IDEA-FinAI/ToG/tree/main/Freebase) and also need to specify the server port of SPARQL in the line 7 of ```freebase.py```.
 
 :warning: Since Freebase is a extreme large KG and our SPARQL query for multi-hop search is complex, we recommend you to modify the default config in the `virtuoso.ini` as followed to avoid potential errors of SPARQLWrapper.
 
@@ -66,7 +66,7 @@ python main.py --dataset webqsp --depth 1 --width 5 --llm gpt-3.5-turbo --api_ke
 - `--depth` : the depth of message passing. :warning: Since we use its 1-hop neighbors information for unnamed entity, $L-1$ round of language message passing may includes $L$-hop information of the topic entity.
 - `--width` : the number of relations sampled.
 - `--llm` : the backbone LLM to usd.
-- `--api_key` : the api key for close-API LLM.
+- `--api_key` : the api key for closed-API LLM.
 - `--verbose` : print LLM input and output.
 
 ## Evaluation
@@ -91,7 +91,7 @@ We have refined our prompts with more clarified instructions, which resulted in 
 | Updated results               |  91.8  | 75.2 |   86.3  |       82.5      |     78.1     |
 
 ## Citation
-If you interested or inspired by our work, please star our repository and cite our work by,
+If you are interested or inspired by our work, please star our repository and cite our work by,
 ```bibtex
 
 ```
