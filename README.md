@@ -91,7 +91,7 @@ We have refined our prompts with more clarified instructions, which resulted in 
 | Updated results               |  91.8  | 75.2 |   86.3  |       82.5      |     78.1     |
 
 ## Citation
-If you interested or inspired by our work, please star your repository and cite our work by,
+If you interested or inspired by our work, please star our repository and cite our work by,
 ```bibtex
 
 ```
