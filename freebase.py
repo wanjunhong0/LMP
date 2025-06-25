@@ -1,9 +1,6 @@
-import re
 from SPARQLWrapper import SPARQLWrapper, JSON
-from prompt import relations_reduced_prompt, relations_distant_reduced_prompt
+from prompts import sample_relations_prompt, sample_relations_distant_prompt
 from utils import run_llm, token_count, get_list_str
-import random
-import concurrent.futures
 import time
 
 
@@ -40,15 +37,14 @@ FILTER(?e != ?e2)
 """
 sparql_entities = """
 PREFIX ns: <http://rdf.freebase.com/ns/>
-SELECT DISTINCT ?start ?e ?name ?wiki ?r ?e1 ?extra
+SELECT DISTINCT ?start ?e ?name ?r ?e1 ?extra
 WHERE {
 VALUES ?start {%s}
 ?start ns:%s ?e .
 FILTER(?e != ns:%s)
 OPTIONAL {?e ns:type.object.name ?name .}.
-OPTIONAL {?e <http://www.w3.org/2002/07/owl#sameAs> ?wiki . FILTER (!BOUND(?name))}.
 OPTIONAL 
-{FILTER (!BOUND(?name) && !BOUND(?wiki))
+{FILTER (!BOUND(?name))
 {?e ?r ?extra . FILTER (isLiteral(?extra))}
 UNION
 {?e ?r ?e1 . ?e1 ns:type.object.name ?extra . }
@@ -63,15 +59,10 @@ WHERE {
 ns:%s ns:common.topic.description ?des .
 }
 """
-sparql_entity_alias = """
-PREFIX ns: <http://rdf.freebase.com/ns/>
-SELECT DISTINCT ?alias
-WHERE {
-ns:%s ns:common.topic.alias ?alias .
-}
-"""
 
-def execute_sparql(sparql_query):
+
+def execute_sparql(sparql_query: str) -> list:
+    """ Execute SPARQL query"""
     sparql = SPARQLWrapper(SPARQLPATH)
     sparql.setQuery(sparql_query)
     sparql.setReturnFormat(JSON)
@@ -84,7 +75,8 @@ def execute_sparql(sparql_query):
     return results["results"]["bindings"]
 
 
-def filter_relations(sparql_output):
+def filter_relations(sparql_output: str) -> list:
+    """ Get relations from SPARQL while removing pre-defined meaningless relations. """
     relations = []
     for i in sparql_output:
         relation = i['r']['value']
@@ -95,34 +87,37 @@ def filter_relations(sparql_output):
 
     return relations
 
-def reduce_relations(question, topic_name, relations, args):
-    prompt = relations_reduced_prompt.format(args.width, question, topic_name, ', '.join(relations))
-    # delete last 10 of the most lengthy relations if over token limits
-    while token_count(prompt) > args.limit:
-        relations = relations[:-10]
-        prompt = relations_reduced_prompt.format(args.width, question, topic_name, ', '.join(relations))
+def sample_relations(question: str, topic_name: str, relations: list, args) -> list:
+    """ Sampling K relevant relations from 1-hop relations using LLM. """
+    prompt = sample_relations_prompt.format(args.width, question, topic_name, ', '.join(relations))
+    # delete the last most lengthy relations if over token limits
+    while token_count(prompt) > args.limit_llm_in:
+        relations = relations[:-1]
+        prompt = sample_relations_prompt.format(args.width, question, topic_name, ', '.join(relations))
     prompt += '\n\nOnly return relations from the ones in the options given.'
     response = run_llm(prompt, args)
-    reduced_relations = get_reduced_relations(response, relations)
+    sampled_relations = get_sampled_relations(response, relations)
+    # retry if failed at retrieving K relations
     minimum = max(args.width, 1)
     history = []
     retry_prompt = 'Selected relations do not exist in the options I provide. Please try again.'
-    while (len(reduced_relations) < minimum and len(history) < args.max_retry):
-        print('Reduced relations failed, Retrying.')
+    while (len(sampled_relations) < minimum and len(history) < args.max_retry):
+        print('Sampling failed, Retrying.')
         minimum = max(minimum - 1, 1)
         history.append(response)
         response = run_llm(prompt, args, history, retry_prompt)
-        reduced_relations = list(set(reduced_relations + get_reduced_relations(response, relations)))
+        sampled_relations = list(set(sampled_relations + get_sampled_relations(response, relations)))
 
-    return reduced_relations
+    return sampled_relations
 
-def reduce_relations_distant(question, topic_name, relations, args):
-    prompt = relations_distant_reduced_prompt.format(args.width, question, topic_name)
+def sample_relations_distant(question: str, topic_name: str, relations: dict, args) -> list:
+    """ Sampling K relevant relations from relations beyond 1-hop using LLM. """
+    prompt = sample_relations_distant_prompt.format(args.width, question, topic_name)
     for i, r in enumerate(relations):
         prompt += '\n{}.\nfact: {}\noptions: {}\n'.format(i+1, relations[r]['fact'], ', '.join(relations[r]['relation']))
-    # delete last 10 of the most lengthy relations if over token limits
-    while token_count(prompt) > args.limit:
-        prompt = relations_distant_reduced_prompt.format(args.width, question, topic_name)
+    # delete the last most lengthy relations if over token limits
+    while token_count(prompt) > args.limit_llm_in:
+        prompt = sample_relations_distant_prompt.format(args.width, question, topic_name)
         max_count = max([token_count(relations[r]['relation']) for r in relations])
         if max_count == 0:
             raise ValueError("The facts exceed LLM token limit.")
@@ -136,42 +131,46 @@ def reduce_relations_distant(question, topic_name, relations, args):
     for r in  relations:
         for i in relations[r]['relation']:
             relations_list.append(r + '->' + i)
-    reduced_relations = get_reduced_relations(response, relations_list)
+    sampled_relations = get_sampled_relations(response, relations_list)
+    # retry if failed at retrieving K relations
     minimum = max(args.width, 1)
     history = []
     retry_prompt = 'Selected relations do not exist in the options I provide. Please try again.'
-    while (len(reduced_relations) < minimum and len(history) < args.max_retry):
+    while (len(sampled_relations) < minimum and len(history) < args.max_retry):
         minimum = max(minimum - 1, 1)
-        print('Reduced relations failed, Retrying.')
+        print('Sampling failed, Retrying.')
         history.append(response)
         response = run_llm(prompt, args, history, retry_prompt)
-        reduced_relations = list(set(reduced_relations + get_reduced_relations(response, relations_list)))
+        sampled_relations = list(set(sampled_relations + get_sampled_relations(response, relations_list)))
 
-    return reduced_relations
+    return sampled_relations
 
-def get_reduced_relations(response, relations):
+def get_sampled_relations(response: str, relations: list) -> list:
+    """ Retrieve sampled relations from the output of LLM. """
     response_list = get_list_str(response)
     response_list = [i for i in ' '.join(response_list).split() if i.count('.') > 1]
     exclude = str.maketrans('', '', '!"#$%&\'()*+,/:;?@[\]^`{|}~')
     response_list = [i.translate(exclude) for i in response_list]
-    reduced_relations = []
+    sampled_relations = []
     for relation in relations:
         if relation in response_list or relation.rsplit('->', 1)[-1] in response_list:
-            reduced_relations.append(relation)
+            sampled_relations.append(relation)
 
-    return reduced_relations
+    return sampled_relations
 
 
-def get_relations(question, topic, topic_name, args):
+def get_relations(question: str, topic: str, topic_name: str, args) -> list:
+    """ Get K topic-related 1-hop relations. """
     relations = execute_sparql(sparql_relations % topic)
     relations = filter_relations(relations)
     if len(relations) > args.width > 0:
-        relations = reduce_relations(question, topic_name, relations, args)
+        relations = sample_relations(question, topic_name, relations, args)
 
     return relations
 
 
-def get_relations_distant(question, topic, topic_name, relations, paths, args):
+def get_relations_distant(question: str, topic: str, topic_name: str, relations: list, graphs: dict, args) -> list:
+    """ Get K topic-related relations beyond 1-hop. """
     next_relations = {}
     for relation in relations:
         if '->' in relation:
@@ -180,9 +179,9 @@ def get_relations_distant(question, topic, topic_name, relations, paths, args):
             next_relation = execute_sparql(sparql_relations_2hop % (topic, relation, topic))
         next_relation = filter_relations(next_relation)
         if len(next_relation) > 0:
-            next_relations.update({relation: {'relation': next_relation, 'fact': paths[relation]['fact']}})
+            next_relations.update({relation: {'relation': next_relation, 'fact': graphs[relation]['fact']}})
     if sum([len(next_relations[r]['relation']) for r in next_relations]) > args.width > 0:
-        next_relations = reduce_relations_distant(question, topic_name, next_relations, args)
+        next_relations = sample_relations_distant(question, topic_name, next_relations, args)
     else:
         relations_list = []
         for r in  next_relations:
@@ -194,7 +193,9 @@ def get_relations_distant(question, topic, topic_name, relations, paths, args):
 
 
 
-def filter_entities(start_entities, sparql_output):
+def filter_entities(start_entities, sparql_output, args):
+    """ Get entity names from SPARQL. """
+    r_previous, entity_id_previous = '', ''
     entities = {start_entities[start_entity]: {} for start_entity in start_entities}
     for i in sparql_output:
         start_entity_id = i['start']['value'].replace("http://rdf.freebase.com/ns/", "")
@@ -204,25 +205,30 @@ def filter_entities(start_entities, sparql_output):
             entity_name = 'NA'
             if 'name' in i:
                 entity_name = i['name']['value']
-            elif 'wiki' in i:
-                entity_name = i['wiki']['value']
+            # use neighbor information for unnamed entities
             elif 'extra' in i:
-                # filter useless extra relations and entities back to start entities
+                # filter useless extra relations
                 r = i['r']['value'].replace("http://rdf.freebase.com/ns/", "")
                 if r.endswith(('id', 'has_no_value', 'has_value')):
                     continue
+                # filter entities back to start entities
                 if 'e1' in i:
                     if i['e1']['value'].replace("http://rdf.freebase.com/ns/", "") in start_entities:
                         continue
+                # only use one entity name per relation
+                if r == r_previous and entity_id == entity_id_previous:  
+                    continue
+                # limit tokens
+                if token_count(entity_name) > args.limit_fact:
+                    continue
                 if entity_id in entities[start_entity_name]:
-                    entity_name = entities[start_entity_name][entity_id] + ', '
+                    entity_name = entities[start_entity_name][entity_id][:-1] + ', '
                 else:
-                    entity_name = ''
+                    entity_name = 'unnamed entity with relevant information ('
                 content = "{}: {}".format(r.split('.')[-1], i['extra']['value'])
                 if content not in entity_name:
-                    entity_name += content
-
-
+                    entity_name += content + ')'
+                r_previous, entity_id_previous = r, entity_id
         elif i['e']['type'] in ['literal', 'typed-literal']: # text entities (has no id, no head relations)
             entity_id = i['e']['type']
             entity_name = i['e']['value']
@@ -233,11 +239,12 @@ def filter_entities(start_entities, sparql_output):
     return entities
 
 
-def get_entities(start_entities, relations, topic):
+def get_entities(start_entities: dict, relations: list, topic: str, args) -> list:
+    """ Get 1-hop neighbor entity names of the topic entity. """
     entities = []
     for relation in relations:
         sparql_output = execute_sparql(sparql_entities % (' '.join(['ns:' + i for i in list(start_entities.keys())]), relation, topic))
-        filtered_entities = filter_entities(start_entities, sparql_output)
+        filtered_entities = filter_entities(start_entities, sparql_output, args)
         for i in filtered_entities:
             filtered_entities[i] = dict(sorted(filtered_entities[i].items(), key=lambda item: item[1]))
 
@@ -246,18 +253,19 @@ def get_entities(start_entities, relations, topic):
     return entities
 
 
-def get_entities_distant(paths, relations, topic):
+def get_entities_distant(graphs: dict, relations: list, topic: str, args) -> list:
+    """ Get beyond 1-hop neighbor entity names of the topic entity . """
     entities = []
     for relation in relations:
         start_entities = {}
-        previous_entities = paths[relation.rsplit('->', 1)[0]]['entities']
+        previous_entities = graphs[relation.rsplit('->', 1)[0]]['entities']
         for i in previous_entities:
             for j in previous_entities[i]:
-                if j not in ['literal', 'typed-literal']:
+                if j not in ['literal', 'typed-literal']:  # remove start entity that does not have neighbors
                     start_entities.update({j: previous_entities[i][j]})
 
         sparql_output = execute_sparql(sparql_entities % (' '.join(['ns:' + i for i in list(start_entities.keys())]), relation.rsplit('->', 1)[1], topic))
-        filtered_entities = filter_entities(start_entities, sparql_output)
+        filtered_entities = filter_entities(start_entities, sparql_output, args)
         for i in filtered_entities:
             filtered_entities[i] = dict(sorted(filtered_entities[i].items(), key=lambda item: item[1]))
 
