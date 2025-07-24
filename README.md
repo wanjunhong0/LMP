@@ -93,5 +93,10 @@ We have refined our prompts with more clarified instructions, which resulted in 
 ## Citation
 If you are interested or inspired by our work, please star our repository and cite our work by,
 ```bibtex
-
+@inproceedings{wan-etal-2025-digest,
+    title = "Digest the Knowledge: Large Language Models empowered Message Passing for Knowledge Graph Question Answering",
+    author = "Wan, Junhong and Yu, Tao and Jiang, Kunyu and Fu, Yao and Jiang, Weihao and Zhu, Jiang",
+    booktitle = "Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics",
+    year = "2025",
+}
 ```
