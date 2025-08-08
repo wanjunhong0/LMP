@@ -1,7 +1,7 @@
 
 # LMP 
 
-The official repository of the ACL 2025 paper "Digest the Knowledge: Large Language Models empowered Message Passing for Knowledge Graph Question Answering".
+The official repository of the ACL 2025 paper ["Digest the Knowledge: Large Language Models empowered Message Passing for Knowledge Graph Question Answering"](https://aclanthology.org/2025.acl-long.750/).
 
 ## Requirement 
 
